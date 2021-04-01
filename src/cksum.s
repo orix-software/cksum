@@ -297,9 +297,9 @@ sopt := sopt1
 
 	fopen fname, O_RDONLY
 	sta fp
-	sty fp+1
+	stx fp+1
 
-	ora fp+1
+	eor fp+1
 	beq errFopen
 
  read:
@@ -972,9 +972,9 @@ NOADD    DEY
 
 	fopen fname, O_RDONLY
 	sta fp
-	sty fp+1
+	stx fp+1
 
-	ora fp+1
+	eor fp+1
 	beq errFopen
 
 	; TODO: Tester le code de retour de fread
