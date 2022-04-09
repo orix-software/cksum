@@ -978,7 +978,7 @@ NOADD    DEY
 	beq errFopen
 
 	; TODO: Tester le code de retour de fread
-	fread inbuf, #79, fp
+	fread inbuf, #79, 1, fp
 	fclose (fp)
 
 	; Remplace les $0a par des $0d
