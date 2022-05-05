@@ -248,8 +248,8 @@ sopt := sopt1
 ;	-
 ;----------------------------------------------------------------------
 .proc cmnd_help
-        print helpmsg, NOSAVE
-;	print longhelp_msg, NOSAVE
+        print helpmsg
+;	print longhelp_msg
         clc
         rts
 .endproc
@@ -403,17 +403,17 @@ sopt := sopt1
 	;lda crc+2
 	;jsr printWord
 
-	;print #'=',NOSAVE
+	;print #'='
 
 	; Checksum en Décimal
 	jsr bin2bcd
 	lda #<str
 	ldy #>str
 	jsr bcd2str
-	print str, NOSAVE
+	print str
 
 	; Taille du fichier
-	print #' ', NOSAVE
+	print #' '
 	lda fsize
 	sta crc
 	lda fsize+1
@@ -450,8 +450,8 @@ sopt := sopt1
 	BRK_KERNEL XWSTR0
 
 	; Nom du fichier
-	print #' ', NOSAVE
-	print fname, NOSAVE
+	print #' '
+	print fname
 
 	BRK_KERNEL XCRLF
 	rts
@@ -644,13 +644,13 @@ sopt := sopt1
 	lda crc+2
 	jsr printWord
 
-	print #'=',NOSAVE
+	print #'='
 
 	jsr bin2bcd
 	lda #<str
 	ldy #>str
 	jsr bcd2str
-	print str, NOSAVE
+	print str
 	BRK_KERNEL XCRLF
 	rts
 .endproc
@@ -1279,7 +1279,7 @@ out1:
 ;
 ;----------------------------------------------------------------------
 .proc prfild
-	print fname, NOSAVE
+	print fname
 	rts
 .endproc
 
@@ -1287,7 +1287,7 @@ out1:
 ;
 ;----------------------------------------------------------------------
 .proc prnamd
-	print fname, NOSAVE
+	print fname
 	rts
 .endproc
 
