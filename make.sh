@@ -6,7 +6,7 @@
 SDK_PATH="../orix-sdk"
 PROGNAME="$(basename `pwd`)"
 
-make clean
+make configure && make clean
 
 START_ADDR=0x0800 make
 
