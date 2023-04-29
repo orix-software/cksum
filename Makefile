@@ -1,4 +1,4 @@
-export PROJECT := cksum
+export PROJECT := $(notdir $(shell pwd))
 
 all: project docs
 

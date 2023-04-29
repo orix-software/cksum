@@ -11,34 +11,13 @@
 .include "fcntl.inc"
 
 ;----------------------------------------------------------------------
-;			Orix Kernel includes
-;----------------------------------------------------------------------
-.include "kernel/src/include/kernel.inc"
-;.include "kernel/src/include/memory.inc"
-;.include "kernel/src/include/process.inc"
-.include "kernel/src/include/ch376.inc"
-;.include "kernel/src/orix.inc"
-
-
-;----------------------------------------------------------------------
-;			Orix Shell includes
-;----------------------------------------------------------------------
-; Pour userzp: include les 2 fichiers...
-;.include "shell/src/include/bash.inc"
-;.include "shell/src/include/orix.inc"
-
-
-;----------------------------------------------------------------------
 ;			Orix SDK includes
 ;----------------------------------------------------------------------
-.include "macros/SDK.mac"
-.include "include/SDK.inc"
-.include "macros/types.mac"
-.include "include/errors.inc"
-
-; .reloc nécessaire parce que le dernier segment de orix.inc est .bss et qu'il
-; y a des .org xxxx dans les fichiers .inc...
-.reloc
+.include "SDK.mac"
+.include "SDK.inc"
+.include "ch376.inc"
+.include "types.mac"
+.include "errors.inc"
 
 ;----------------------------------------------------------------------
 ;				Imports
@@ -46,7 +25,6 @@
 
 ; From debug
 .import PrintHexByte
-;.import PrintRegs
 
 ; From sopt
 .import spar1, sopt1, calposp, incr
@@ -69,8 +47,6 @@ sopt := sopt1
 ;				Exports
 ;----------------------------------------------------------------------
 .export _main
-;.export _argc
-;.export _argv
 
 ; Pour ermes
 .export crlf1, out1
@@ -87,12 +63,16 @@ sopt := sopt1
 ;----------------------------------------------------------------------
 ; Defines / Constants
 ;----------------------------------------------------------------------
-	LSB  := crc+3
-	NLSB := crc+2
-	NMSB := crc+1
-	MSB  := crc+0
+VERSION = $202320
 
-	max_path := KERNEL_MAX_PATH_LENGTH
+KERNEL_MAX_PATH_LENGTH = 49
+
+LSB  := crc+3
+NLSB := crc+2
+NMSB := crc+1
+MSB  := crc+0
+
+max_path := KERNEL_MAX_PATH_LENGTH
 
 ;----------------------------------------------------------------------
 ;				Page Zéro
@@ -111,9 +91,8 @@ sopt := sopt1
 ;----------------------------------------------------------------------
 .segment "DATA"
 	char str[11]
-;	unsigned char extractbuf
 	unsigned short fp
-	char fname[max_path]
+	unsigned char fname[max_path]
 	unsigned long fsize
 
 	unsigned char xio
@@ -135,11 +114,6 @@ sopt := sopt1
 	unsigned char crct3[256]
 
 ;----------------------------------------------------------------------
-;				ORIXHDR
-;----------------------------------------------------------------------
-; MODULE __MAIN_START__, __MAIN_LAST__, _main
-
-;----------------------------------------------------------------------
 ;			Segments vides
 ;----------------------------------------------------------------------
 .segment "STARTUP"
@@ -152,84 +126,116 @@ sopt := sopt1
 .segment "CODE"
 
 .proc _main
-;	lda #$00
-;	sta extractptr
-	ldy #>( (__BSS_LOAD__ + __BSS_SIZE__) & $ff00)
-	lda #<( (__BSS_LOAD__ + __BSS_SIZE__) )
-	beq skip
-	iny
- skip:
-	sty extractbuf
+		ldy	#>( (__BSS_LOAD__ + __BSS_SIZE__) & $ff00)
+		lda	#<( (__BSS_LOAD__ + __BSS_SIZE__) )
+		beq	skip
+		iny
+	skip:
+		sty	extractbuf
 
-	; Calcul de la taille du tampon pour l'extraction
-	sec
-	lda #>__RAMEND__
-	sbc extractbuf
-	sta nbpagemax+1
-	lda #$00
-	sta nbpagemax
+		; Calcul de la taille du tampon pour l'extraction
+		sec
+		lda	#>__RAMEND__
+		sbc	extractbuf
+		sta	nbpagemax+1
+		lda	#$00
+		sta	nbpagemax
 
-	; Initialisation de la table
-	; test cksum
-	jsr makecksumtable
+		; Initialisation de la table
+		; test cksum
+		jsr	makecksumtable
 
-	ldy #<(BUFEDT+.strlen("CKSUM"))
-	lda #>(BUFEDT+.strlen("CKSUM"))
+		ldy	#<BUFEDT
+		lda	#>BUFEDT
+		sty	cbp
+		sta	cbp+1
 
- getopt:
-	jsr sopt
-	.asciiz "H"
-	bcs error
+		ldy	#$ff
+	loop:
+		iny
+		lda	(cbp),y
+		clc
+		beq	eol
 
-	cpx #$80
-	bne cmnd_exec
-	jmp cmnd_help
+		cmp	#' '
+		bne	loop
 
- cmnd_exec:
-	ldy #$00
-	lda (cbp),y
-	cmp #'@'
-	bne go
+	eol:
+		; Ici si on a trouvé un ' ' => C=1
+		tya
+		ldy	cbp+1
+		adc	cbp
+		sta	cbp
+		bcc	loop_end
 
-	; Mode batch activé
-	jsr openbatch
-	bcc getopt
-	bcs error
+		iny
+	loop_end:
+		tya
+		ldy	cbp
 
- go:
-	jsr getfname
-	bcs error
- cksum:
-	jsr cmnd_cksum
-	bcs error
+	getopt:
+		jsr	sopt
+		.asciiz "HV"
+		bcs	error
 
-	;
-	ldy #$00
- skipcr:
-	lda (cbp),y
-	beq end
-	cmp #$0d
-	bne _calcposp
-	iny
-	bne skipcr
-	; Si débordement de Y
-	beq errEOF
+		cpx	#$40
+		bcc	cmnd_exec
 
-  _calcposp:
-	jsr calposp
-;	bne go
-	bne getopt
+		bne	_help
 
- error:
-	jsr ermes
- end:
-	BRK_KERNEL XCRLF
-	rts
+		jmp	cmnd_version
+	_help:
+		jmp	cmnd_help
 
- errEOF:
-	lda #e4
-	sec
-	jmp ermes
+	cmnd_exec:
+		ldy	#$00
+		lda	(cbp),y
+		cmp	#'@'
+		bne	go
+
+		; Mode batch activé
+		jsr	openbatch
+		bcc	getopt
+
+		bcs	error
+
+	go:
+		jsr	getfname
+		bcs	error
+
+	cksum:
+		jsr	cmnd_cksum
+		bcs	error
+
+		;
+		ldy	#$00
+	skipcr:
+		lda	(cbp),y
+		beq	end
+
+		cmp	#$0d
+		bne	_calcposp
+
+		iny
+		bne	skipcr
+
+		; Si débordement de Y
+		beq	errEOF
+
+	_calcposp:
+		jsr	calposp
+		bne	getopt
+
+	error:
+		jsr	ermes
+	end:
+		crlf
+		rts
+
+	errEOF:
+		lda	#e4
+		sec
+		jmp	ermes
 .endproc
 
 
@@ -248,12 +254,35 @@ sopt := sopt1
 ;	-
 ;----------------------------------------------------------------------
 .proc cmnd_help
-        print helpmsg
-;	print longhelp_msg
-        clc
-        rts
+		print helpmsg
+;		print longhelp_msg
+		clc
+		rts
 .endproc
 
+;----------------------------------------------------------------------
+;
+; Entrée:
+;
+; Sortie:
+;
+; Variables:
+;	Modifiées:
+;		-
+;	Utilisées:
+;		-
+; Sous-routines:
+;	-
+;----------------------------------------------------------------------
+.proc cmnd_version
+		.out .sprintf("cksum v%x.%x.%x", ::VERSION >> 8, (::VERSION & $ff)>>4 , (::VERSION & $0f))
+
+		prints  .sprintf("cksum v%x.%x.%x", ::VERSION >> 8, (::VERSION & $ff)>>4 , (::VERSION & $0f))
+		crlf
+
+		clc
+		rts
+.endproc
 
 ;----------------------------------------------------------------------
 ;
@@ -283,99 +312,104 @@ sopt := sopt1
 ;	dispresult
 ;----------------------------------------------------------------------
 .proc cmnd_cksum
-	; Valeur initiale
-	lda #$00
-	sta crc
-	sta crc+1
-	sta crc+2
-	sta crc+3
-	; Taille du fichier
-	sta fsize
-	sta fsize+1
-	sta fsize+2
-	sta fsize+3
+		; Valeur initiale
+		lda	#$00
+		sta	crc
+		sta	crc+1
+		sta	crc+2
+		sta	crc+3
 
-	fopen fname, O_RDONLY
-	sta fp
-	stx fp+1
+		; Taille du fichier
+		sta	fsize
+		sta	fsize+1
+		sta	fsize+2
+		sta	fsize+3
 
-	eor fp+1
-	beq errFopen
+		fopen fname, O_RDONLY
+		sta	fp
+		stx	fp+1
 
- read:
-	lda #$ff
-	tay
-	jsr SetByteRead
-	bcs error
+		eor	fp+1
+		beq	errFopen
 
- read1:
-	lda #$27
-	sta CH376_COMMAND
-	ldy CH376_DATA
-	beq nextchunk
+	read:
+		lda	#$ff
+		tay
+		jsr	SetByteRead
+		bcs	error
 
-	; Mise à jour de la taille du fichier (MSB en premier)
-	clc
-	tya
-	adc fsize+3
-	sta fsize+3
-	bcc loop
-	inc fsize+2
-	bne loop
-	inc fsize+1
-	bne loop
-	inc fsize
+	read1:
+		lda	#$27
+		sta	CH376_COMMAND
+		ldy	CH376_DATA
+		beq	nextchunk
 
- loop:
-	lda CH376_DATA
-	jsr crc32
-	dey
-	bne loop
+		; Mise à jour de la taille du fichier (MSB en premier)
+		clc
+		tya
+		adc	fsize+3
+		sta	fsize+3
+		bcc	loop
 
- nextchunk:
-	jsr ByteRdGo
-	bcc read1
+		inc	fsize+2
+		bne	loop
 
-	lda #$ff
-	tay
-	jsr SetByteRead
-	bcc read1
+		inc	fsize+1
+		bne	loop
 
- end:
-	fclose(fp)
+		inc	fsize
 
-	; Cherche le premier octet non nul de la taille du fichier
-	ldx #$ff
- loop1:
-	inx
-	lda fsize,x
-	bne addfsize
-	cpx #$03
-	bne loop1
+	loop:
+		lda	CH376_DATA
+		jsr	crc32
+		dey
+		bne	loop
 
-	; Ajoute crc32(taille du fichier)
-	; LSB en premier
- addfsize:
-	ldy #$03
- loop3:
-	lda fsize,y
-	jsr crc32
-	dey
-	inx
-	cpx #$04
-	bne loop3
+	nextchunk:
+		jsr	ByteRdGo
+		bcc	read1
 
- dispcksum:
-	jsr compl32
-	jsr dispresult
+		lda	#$ff
+		tay
+		jsr	SetByteRead
+		bcc	read1
 
-	rts
+	end:
+		fclose(fp)
 
- errFopen:
-	lda #e13
-	sec
- error:
-	rts
+		; Cherche le premier octet non nul de la taille du fichier
+		ldx	#$ff
+	loop1:
+		inx
+		lda	fsize,x
+		bne	addfsize
+
+		cpx	#$03
+		bne	loop1
+
+		; Ajoute crc32(taille du fichier)
+		; LSB en premier
+	addfsize:
+		ldy	#$03
+	loop3:
+		lda	fsize,y
+		jsr	crc32
+		dey
+		inx
+		cpx	#$04
+		bne	loop3
+
+	dispcksum:
+		jsr	compl32
+		jsr	dispresult
+
+		rts
+
+	errFopen:
+		lda	#e13
+		sec
+	error:
+		rts
 
 .endproc
 
@@ -395,66 +429,66 @@ sopt := sopt1
 ;	-
 ;----------------------------------------------------------------------
 .proc dispresult
-	; Checksum en Hexa
-	;ldy crc+1
-	;lda crc
-	;jsr printWord
-	;ldy crc+3
-	;lda crc+2
-	;jsr printWord
+		; Checksum en Hexa
+		;ldy crc+1
+		;lda crc
+		;jsr printWord
+		;ldy crc+3
+		;lda crc+2
+		;jsr printWord
 
-	;print #'='
+		;print #'='
 
-	; Checksum en Décimal
-	jsr bin2bcd
-	lda #<str
-	ldy #>str
-	jsr bcd2str
-	print str
+		; Checksum en Décimal
+		jsr	bin2bcd
+		lda	#<str
+		ldy	#>str
+		jsr	bcd2str
+		print	str
 
-	; Taille du fichier
-	print #' '
-	lda fsize
-	sta crc
-	lda fsize+1
-	sta crc+1
-	lda fsize+2
-	sta crc+2
-	lda fsize+3
-	sta crc+3
+		; Taille du fichier
+		print	#' '
+		lda	fsize
+		sta	crc
+		lda	fsize+1
+		sta	crc+1
+		lda	fsize+2
+		sta	crc+2
+		lda	fsize+3
+		sta	crc+3
 
-	jsr bin2bcd
-	lda #<str
-	ldy #>str
-	jsr bcd2str
+		jsr	bin2bcd
+		lda	#<str
+		ldy	#>str
+		jsr	bcd2str
 
-	; Saute les 0 non significatifs
-	ldx #$ff
- skip0:
-	inx
-	lda str,x
-	cmp #'0'
-	bne _print
-	cpx #$09
-	bne skip0
+		; Saute les 0 non significatifs
+		ldx	#$ff
+	skip0:
+		inx
+		lda	str,x
+		cmp	#'0'
+		bne	_print
+		cpx	#$09
+		bne	skip0
 
- _print:
-	txa
-	clc
-	adc #<str
-	pha
-	lda #>str
-	adc #$00
-	tay
-	pla
-	BRK_KERNEL XWSTR0
+	_print:
+		txa
+		clc
+		adc	#<str
+		pha
+		lda	#>str
+		adc	#$00
+		tay
+		pla
+		.byte $00, XWSTR0
 
-	; Nom du fichier
-	print #' '
-	print fname
+		; Nom du fichier
+		print	#' '
+		print	fname
 
-	BRK_KERNEL XCRLF
-	rts
+		crlf
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
@@ -472,188 +506,188 @@ sopt := sopt1
 ;	-
 ;----------------------------------------------------------------------
 .ifdef TEST
-.proc test
-	BRK_KERNEL XCRLF
+	.proc test
+			crlf
 
-	; Valeur initiale: $ffff
-	lda #$ff
-	sta crclo
-	sta crchi
+			; Valeur initiale: $ffff
+			lda	#$ff
+			sta	crclo
+			sta	crchi
 
-	lda #$a1
-	jsr crc16_f
+			lda	#$a1
+			jsr	crc16_f
 
-	lda #$a1
-	jsr crc16_f
+			lda	#$a1
+			jsr	crc16_f
 
-	lda #$a1
-	jsr crc16_f
+			lda	#$a1
+			jsr	crc16_f
 
-	lda #$fe
-	jsr crc16_f
+			lda	#$fe
+			jsr	crc16_f
 
-	lda #$00
-	jsr crc16_f
+			lda	#$00
+			jsr	crc16_f
 
-	lda #$00
-	jsr crc16_f
+			lda	#$00
+			jsr	crc16_f
 
-	lda #$01
-	jsr crc16_f
+			lda	#$01
+			jsr	crc16_f
 
-	lda #$01
-	jsr crc16_f
+			lda	#$01
+			jsr	crc16_f
 
-	ldy crclo
-	lda crchi
-	jsr printWord
+			ldy	crclo
+			lda	crchi
+			jsr	printWord
 
-	BRK_KERNEL XCRLF
+			crlf
 
-	; --------------------------
-	; Initialisation de la table
-	jsr makecrc16table
-	lda #$ff
-	sta crclo
-	sta crchi
+			; --------------------------
+			; Initialisation de la table
+			jsr	makecrc16table
+			lda	#$ff
+			sta	crclo
+			sta	crchi
 
-	lda #$a1
-	jsr crc16
+			lda	#$a1
+			jsr	crc16
 
-	lda #$a1
-	jsr crc16
+			lda	#$a1
+			jsr	crc16
 
-	lda #$a1
-	jsr crc16
+			lda	#$a1
+			jsr	crc16
 
-	lda #$fe
-	jsr crc16
+			lda	#$fe
+			jsr	crc16
 
-	lda #$00
-	jsr crc16
+			lda	#$00
+			jsr	crc16
 
-	lda #$00
-	jsr crc16
+			lda	#$00
+			jsr	crc16
 
-	lda #$01
-	jsr crc16
+			lda	#$01
+			jsr	crc16
 
-	lda #$01
-	jsr crc16
+			lda	#$01
+			jsr	crc16
 
-	ldy crclo
-	lda crchi
-	jsr printWord
+			ldy	crclo
+			lda	crchi
+			jsr	printWord
 
-	BRK_KERNEL XCRLF
+			crlf
 
-	; --------------------------
-	; Initialisation de la table
-	jsr makecrc32table
+			; --------------------------
+			; Initialisation de la table
+			jsr	makecrc32table
 
-	; Valeur initiale
-	lda #$ff
-	sta crc
-	sta crc+1
-	sta crc+2
-	sta crc+3
+			; Valeur initiale
+			lda	#$ff
+			sta	crc
+			sta	crc+1
+			sta	crc+2
+			sta	crc+3
 
-	; Calcul du CRC32
-;	lda #$a1
-;	jsr crc32
+			; Calcul du CRC32
+		;	lda	#$a1
+		;	jsr	crc32
 
-;	lda #$a1
-;	jsr crc32
+		;	lda	#$a1
+		;	jsr	crc32
 
-;	lda #$a1
-;	jsr crc32
+		;	lda	#$a1
+		;	jsr	crc32
 
-;	lda #$fe
-;	jsr crc32
+		;	lda	#$fe
+		;	jsr	crc32
 
-;	lda #$00
-;	jsr crc32
+		;	lda	#$00
+		;	jsr	crc32
 
-;	lda #$00
-;	jsr crc32
+		;	lda	#$00
+		;	jsr	crc32
 
-;	lda #$01
-;	jsr crc32
+		;	lda	#$01
+		;	jsr	crc32
 
-;	lda #$01
-;	jsr crc32
+		;	lda	#$01
+		;	jsr	crc32
 
-	lda #'1'
-	jsr crc32
-	lda #'2'
-	jsr crc32
-	lda #'3'
-	jsr crc32
+			lda	#'1'
+			jsr	crc32
+			lda	#'2'
+			jsr	crc32
+			lda	#'3'
+			jsr	crc32
 
 
-;	ldy #$00
-;loop
-;	lda buffer,y
-;	jsr crc32
-;	iny
-;	bne loop
+		;	ldy	#$00
+		;loop
+		;	lda	buffer,y
+		;	jsr	crc32
+		;	iny
+		;	bne	loop
 
-	; Complément du CRC
-	jsr compl32
+			; Complément du CRC
+			jsr	compl32
 
-	; Affiche le crc
-	ldy crc+2
-	lda crc+3
-	jsr printWord
-	ldy crc
-	lda crc+1
-	jsr printWord
+			; Affiche le crc
+			ldy	crc+2
+			lda	crc+3
+			jsr	printWord
+			ldy	crc
+			lda	crc+1
+			jsr	printWord
 
-	BRK_KERNEL XCRLF
+			crlf
 
-	; --------------------------
-	; Initialisation de la table
-	; test cksum
-	jsr makecksumtable
+			; --------------------------
+			; Initialisation de la table
+			; test cksum
+			jsr	makecksumtable
 
-	; Valeur initiale
-	lda #$00
-	sta crc
-	sta crc+1
-	sta crc+2
-	sta crc+3
+			; Valeur initiale
+			lda	#$00
+			sta	crc
+			sta	crc+1
+			sta	crc+2
+			sta	crc+3
 
-	; Calcul cksum
-	lda #'1'
-	jsr crc32
-	lda #'2'
-	jsr crc32
-	lda #'3'
-	jsr crc32
+			; Calcul cksum
+			lda	#'1'
+			jsr	crc32
+			lda	#'2'
+			jsr	crc32
+			lda	#'3'
+			jsr	crc32
 
-	; Ajoute la longueur du message (LSB en premier)
-	lda #$03
-	jsr crc32
+			; Ajoute la longueur du message (LSB en premier)
+			lda	#$03
+			jsr	crc32
 
-	jsr compl32
+			jsr	compl32
 
-	ldy crc+1
-	lda crc
-	jsr printWord
-	ldy crc+3
-	lda crc+2
-	jsr printWord
+			ldy	crc+1
+			lda	crc
+			jsr	printWord
+			ldy	crc+3
+			lda	crc+2
+			jsr	printWord
 
-	print #'='
+			print	#'='
 
-	jsr bin2bcd
-	lda #<str
-	ldy #>str
-	jsr bcd2str
-	print str
-	BRK_KERNEL XCRLF
-	rts
-.endproc
+			jsr	bin2bcd
+			lda	#<str
+			ldy	#>str
+			jsr	bcd2str
+			print	str
+			crlf
+			rts
+	.endproc
 .endif
 
 ;----------------------------------------------------------------------
@@ -671,35 +705,35 @@ sopt := sopt1
 ;	-
 ;----------------------------------------------------------------------
 .ifdef CRC16_F
-.proc crc16_f
-        EOR crchi       ; A contained the data
-        STA crchi       ; XOR it into high byte
-        LSR             ; right shift A 4 bits
-        LSR             ; to make top of x^12 term
-        LSR             ; ($1...)
-        LSR
-        TAX             ; save it
-        ASL             ; then make top of x^5 term
-        EOR crclo       ; and XOR that with low byte
-        STA crclo       ; and save
-        TXA             ; restore partial term
-        EOR crchi       ; and update high byte
-        STA crchi       ; and save
-        ASL             ; left shift three
-        ASL             ; the rest of the terms
-        ASL             ; have feedback from x^12
-        TAX             ; save bottom of x^12
-        ASL             ; left shift two more
-        ASL             ; watch the carry flag
-        EOR crchi       ; bottom of x^5 ($..2.)
-        TAY             ; save high byte
-        TXA             ; fetch temp value
-        ROL             ; bottom of x^12, middle of x^5!
-        EOR crclo       ; finally update low byte
-        STA crchi       ; then swap high and low bytes
-        STY crclo
-        RTS
-.endproc
+	.proc crc16_f
+			eor	crchi		; A contained the data
+			sta	crchi		; XOR it into high byte
+			lsr			; right shift A 4 bits
+			lsr			; to make top of x^12 term
+			lsr			; ($1...)
+			lsr
+			tax			; save it
+			asl			; then make top of x^5 term
+			eor	crclo		; and XOR that with low byte
+			sta	crclo		; and save
+			txa			; restore partial term
+			eor	crchi		; and update high byte
+			sta	crchi		; and save
+			asl			; left shift three
+			asl			; the rest of the terms
+			asl			; have feedback from x^12
+			tax			; save bottom of x^12
+			asl			; left shift two more
+			asl			; watch the carry flag
+			eor	crchi		; bottom of x^5 ($..2.)
+			tay			; save high byte
+			txa			; fetch temp value
+			rol			; bottom of x^12, middle of x^5!
+			eor	crclo		; finally update low byte
+			sta	crchi		; then swap high and low bytes
+			sty	crclo
+			rts
+	.endproc
 .endif
 
 ;----------------------------------------------------------------------
@@ -717,16 +751,16 @@ sopt := sopt1
 ;	-
 ;----------------------------------------------------------------------
 .ifdef CRC16
-.proc crc16
-         EOR crchi       ; Quick CRC computation with lookup tables
-         TAX
-         LDA crclo
-         EOR crct1,X
-         STA crchi
-         LDA crct0,X
-         STA crclo
-         RTS
-.endproc
+	.proc crc16
+			 eor	crchi		; Quick CRC computation with lookup tables
+			 tax
+			 lda	crclo
+			 eor	crct1,X
+			 sta	crchi
+			 lda	crct0,X
+			 sta	crclo
+			 rts
+	.endproc
 .endif
 
 ;----------------------------------------------------------------------
@@ -744,25 +778,24 @@ sopt := sopt1
 ;	-
 ;----------------------------------------------------------------------
 .proc crc32
-	stx xio
+		stx	xio
 
-         EOR crc         ; Quick CRC computation with lookup tables
-         TAX
-         LDA crc+1
-         EOR crct0,X
-         STA crc
-         LDA crc+2
-         EOR crct1,X
-         STA crc+1
-         LDA crc+3
-         EOR crct2,X
-         STA crc+2
-         LDA crct3,X
-         STA crc+3
+		eor	crc		; Quick CRC computation with lookup tables
+		tax
+		lda	crc+1
+		eor	crct0,X
+		sta	crc
+		lda	crc+2
+		eor	crct1,X
+		sta	crc+1
+		lda	crc+3
+		eor	crct2,X
+		sta	crc+2
+		lda	crct3,X
+		sta	crc+3
 
-	ldx xio
-         RTS
-
+		ldx	xio
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
@@ -780,14 +813,16 @@ sopt := sopt1
 ;	-
 ;----------------------------------------------------------------------
 .proc compl32
-	; Complément du CRC
-         LDY #3
-COMPL    LDA crc,Y
-         EOR #$FF
-         STA crc,Y
-         DEY
-         BPL COMPL
-	rts
+		; Complément du CRC
+		ldy	#3
+	compl:
+		lda	crc,Y
+		eor	#$FF
+		sta	crc,Y
+		dey
+		bpl	compl
+
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
@@ -805,29 +840,37 @@ COMPL    LDA crc,Y
 ;	-
 ;----------------------------------------------------------------------
 .ifdef CRC16
-.proc makecrc16table
-         LDX #0          ; X counts from 0 to 255
-BYTELOOP LDA #0          ; A contains the low 8 bits of the CRC-16
-         STX crc         ; and CRC contains the high 8 bits
-         LDY #8          ; Y counts bits in a byte
-BITLOOP  ASL
-         ROL crc         ; Shift CRC left
-         BCC NOADD       ; Do nothing if no overflow
-         EOR #$21        ; else add CRC-16 polynomial $1021
-         PHA             ; Save low byte
-         LDA crc         ; Do high byte
-         EOR #$10
-         STA crc
-         PLA             ; Restore low byte
-NOADD    DEY
-         BNE BITLOOP     ; Do next bit
-         STA crct0,X     ; Save CRC into table, low byte
-         LDA crc         ; then high byte
-         STA crct1,X
-         INX
-         BNE BYTELOOP    ; Do next byte
-         RTS
-.endproc
+	.proc makecrc16table
+			ldx	#0		; X counts from 0 to 255
+		byteloop:
+			lda	#0		; A contains the low 8 bits of the CRC-16
+			stx	crc		; and CRC contains the high 8 bits
+			ldy	#8		; Y counts bits in a byte
+
+		bitloop:
+			asl
+			rol	crc		; Shift CRC left
+			bcc	noadd		; Do nothing if no overflow
+
+			eor	#$21		; else add CRC-16 polynomial $1021
+			pha			; Save low byte
+			lda	crc		; Do high byte
+			eor	#$10
+			sta	crc
+			pla			; Restore low byte
+
+		noadd:
+			dey
+			bne	bitloop		; Do next bit
+
+			sta	crct0,X		; Save CRC into table, low byte
+			lda	crc		; then high byte
+			sta	crct1,X
+			inx
+			bne	byteloop	; Do next byte
+
+			rts
+	.endproc
 .endif
 
 ;----------------------------------------------------------------------
@@ -845,41 +888,49 @@ NOADD    DEY
 ;	-
 ;----------------------------------------------------------------------
 .proc makecksumtable
-         LDX #0          ; X counts from 0 to 255
-BYTELOOP LDA #0          ; A contains the high byte of the CRC-32
-         STA crc+2       ; The other three bytes are in memory
-         STA crc+1
-         STX crc
-         LDY #8          ; Y counts bits in a byte
-BITLOOP  ASL             ; The CRC-32 algorithm is similar to CRC-16
-         ROL crc+2       ; except that it is reversed (originally for
-         ROL crc+1       ; hardware reasons). This is why we shift
-         ROL crc         ; right instead of left here.
-         BCC NOADD       ; Do nothing if no overflow
-         EOR #$B7        ; else add CRC-32 polynomial $EDB88320
-         PHA             ; Save high byte while we do others
-         LDA crc+2
-         EOR #$1D        ; Most reference books give the CRC-32 poly
-         STA crc+2       ; as $04C11DB7. This is actually the same if
-         LDA crc+1       ; you write it in binary and read it right-
-         EOR #$C1        ; to-left instead of left-to-right. Doing it
-         STA crc+1       ; this way means we won't have to explicitly
-         LDA crc         ; reverse things afterwards.
-         EOR #$04
-         STA crc
-         PLA             ; Restore high byte
-NOADD    DEY
-         BNE BITLOOP     ; Do next bit
-         STA crct3,X     ; Save CRC into table, high to low bytes
-         LDA crc+2
-         STA crct2,X
-         LDA crc+1
-         STA crct1,X
-         LDA crc
-         STA crct0,X
-         INX
-         BNE BYTELOOP    ; Do next byte
-         RTS
+		ldx	#0		; X counts from 0 to 255
+	byteloop:
+		lda	#0		; A contains the high byte of the CRC-32
+		sta	crc+2		; The other three bytes are in memory
+		sta	crc+1
+		stx	crc
+
+		ldy	#8		; Y counts bits in a byte
+	bitloop:
+		asl			; The CRC-32 algorithm is similar to CRC-16
+		rol	crc+2		; except that it is reversed (originally for
+		rol	crc+1		; hardware reasons). This is why we shift
+		rol	crc		; right instead of left here.
+		bcc	noadd		; Do nothing if no overflow
+
+		eor	#$B7		; else add CRC-32 polynomial $EDB88320
+		pha			; Save high byte while we do others
+		lda	crc+2
+		eor	#$1D		; Most reference books give the CRC-32 poly
+		sta	crc+2		; as $04C11DB7. This is actually the same if
+		lda	crc+1		; you write it in binary and read it right-
+		eor	#$C1		; to-left instead of left-to-right. Doing it
+		sta	crc+1		; this way means we won't have to explicitly
+		lda	crc		; reverse things afterwards.
+		eor	#$04
+		sta	crc
+		pla			; Restore high byte
+
+	noadd:
+		dey
+		bne	bitloop		; Do next bit
+
+		sta	crct3,x		; Save CRC into table, high to low bytes
+		lda	crc+2
+		sta	crct2,x
+		lda	crc+1
+		sta	crct1,x
+		lda	crc
+		sta	crct0,x
+		inx
+		bne	byteloop	; Do next byte
+
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
@@ -897,43 +948,48 @@ NOADD    DEY
 ;	-
 ;----------------------------------------------------------------------
 .ifdef CRC32
-.proc makecrc32table
-         LDX #0          ; X counts from 0 to 255
-BYTELOOP LDA #0          ; A contains the high byte of the CRC-32
-         STA crc+2       ; The other three bytes are in memory
-         STA crc+1
-         STX crc
-         LDY #8          ; Y counts bits in a byte
-BITLOOP  LSR             ; The CRC-32 algorithm is similar to CRC-16
-         ROR crc+2       ; except that it is reversed (originally for
-         ROR crc+1       ; hardware reasons). This is why we shift
-         ROR crc         ; right instead of left here.
-         BCC NOADD       ; Do nothing if no overflow
-         EOR #$ED        ; else add CRC-32 polynomial $EDB88320
-         PHA             ; Save high byte while we do others
-         LDA crc+2
-         EOR #$B8        ; Most reference books give the CRC-32 poly
-         STA crc+2       ; as $04C11DB7. This is actually the same if
-         LDA crc+1       ; you write it in binary and read it right-
-         EOR #$83        ; to-left instead of left-to-right. Doing it
-         STA crc+1       ; this way means we won't have to explicitly
-         LDA crc         ; reverse things afterwards.
-         EOR #$20
-         STA crc
-         PLA             ; Restore high byte
-NOADD    DEY
-         BNE BITLOOP     ; Do next bit
-         STA crct3,X     ; Save CRC into table, high to low bytes
-         LDA crc+2
-         STA crct2,X
-         LDA crc+1
-         STA crct1,X
-         LDA crc
-         STA crct0,X
-         INX
-         BNE BYTELOOP    ; Do next byte
-         RTS
-.endproc
+	.proc makecrc32table
+			ldx	#0		; X counts from 0 to 255
+		byteloop:
+			lda	#0		; A contains the high byte of the CRC-32
+			sta	crc+2		; The other three bytes are in memory
+			sta	crc+1
+			stx	crc
+
+			ldy	#8		; Y counts bits in a byte
+		bitloop:
+			lsr			; The CRC-32 algorithm is similar to CRC-16
+			ror	crc+2		; except that it is reversed (originally for
+			ror	crc+1		; hardware reasons). This is why we shift
+			ror	crc		; right instead of left here.
+			bcc	noadd		; Do nothing if no overflow
+			eor	#$ED		; else add CRC-32 polynomial $EDB88320
+			pha			; Save high byte while we do others
+			lda	crc+2
+			eor	#$B8		; Most reference books give the CRC-32 poly
+			sta	crc+2		; as $04C11DB7. This is actually the same if
+			lda	crc+1		; you write it in binary and read it right-
+			eor	#$83		; to-left instead of left-to-right. Doing it
+			sta	crc+1		; this way means we won't have to explicitly
+			lda	crc		; reverse things afterwards.
+			eor	#$20
+			sta	crc
+			pla			; Restore high byte
+		noadd:
+			dey
+			bne	bitloop		; Do next bit
+			sta	crct3,x		; Save CRC into table, high to low bytes
+			lda	crc+2
+			sta	crct2,x
+			lda	crc+1
+			sta	crct1,x
+			lda	crc
+			sta	crct0,x
+			inx
+			bne	byteloop	; Do next byte
+
+			rts
+	.endproc
 .endif
 
 ;**********************************************************************
@@ -954,62 +1010,62 @@ NOADD    DEY
 ;	-
 ;----------------------------------------------------------------------
 .proc openbatch
-	; Mode batch activé
-	ldx #cbp
-	jsr incr
-	ldy cbp
-	lda cbp+1
-	jsr getfname
-	bcs errFopen
+		; Mode batch activé
+		ldx	#cbp
+		jsr	incr
+		ldy	cbp
+		lda	cbp+1
+		jsr	getfname
+		bcs	errFopen
 
-	; rempli de buffer de $00 au cas où...
-	lda #$00
-	ldx #80
- loop:
-	sta inbuf,x
-	dex
-	bpl loop
+		; rempli de buffer de $00 au cas où...
+		lda	#$00
+		ldx	#80
+	loop:
+		sta	inbuf,x
+		dex
+		bpl	loop
 
-	fopen fname, O_RDONLY
-	sta fp
-	stx fp+1
+		fopen	fname, O_RDONLY
+		sta	fp
+		stx	fp+1
 
-	eor fp+1
-	beq errFopen
+		eor	fp+1
+		beq	errFopen
 
-	; TODO: Tester le code de retour de fread
-	fread inbuf, #79, 1, fp
-	fclose (fp)
+		; TODO: Tester le code de retour de fread
+		fread	inbuf, #79, 1, fp
+		fclose	(fp)
 
-	; Remplace les $0a par des $0d
-	ldx #81
- loop1:
- 	dex
-	beq go_batch
-	lda inbuf,x
-	cmp #$0a
-	bne loop1
-	lda #$0d
-	sta inbuf,x
-	bne loop1
+		; Remplace les $0a par des $0d
+		ldx	#81
+	loop1:
+	 	dex
+		beq	go_batch
+		lda	inbuf,x
+		cmp	#$0a
+		bne	loop1
+		lda	#$0d
+		sta	inbuf,x
+		bne	loop1
 
- go_batch:
-	ldy #<inbuf
-	lda #>inbuf
-	;bne getopt			; >inbuf ne peut pas être nul
+	go_batch:
+		ldy	#<inbuf
+		lda	#>inbuf
+		;bne getopt			; >inbuf ne peut pas être nul
 
-	; Met à jour cbp
-	sty cbp
-	sta cbp+1
-	clc
-	rts
+		; Met à jour cbp
+		sty	cbp
+		sta	cbp+1
+		clc
+		rts
 
-  errFopen:
-	lda #e13
-	sec
+	errFopen:
+		lda	#e13
+		sec
 
-  error:
-	rts
+	error:
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
@@ -1020,8 +1076,7 @@ NOADD    DEY
 	    .byte $0a, $0d
 	    .byte $1b,"C            cksum utility\r\n\n"
 	    .byte " ",$1b,"TSyntax:",$1b,"P\r\n"
-	    .byte "    cksum",$1b,"A-h\r\n"
-;	    .byte "    cksum",$1b,"A-c file\r\n"
+	    .byte "    cksum",$1b,"A-h",$1b,"G|",$1b,"A-v\r\n"
 	    .byte "    cksum",$1b,"Afile",$1b,"B[...]\r\n"
 	    .byte "    cksum",$1b,"A@filename"
 	    .byte "\r\n"
@@ -1056,22 +1111,24 @@ NOADD    DEY
 ; Sous-routines:
 ;	-
 ;----------------------------------------------------------------------
-printWord:
-;	print #' '
-;	lda address+1
-;	jsr PrintHexByte
-;	lda address
-;	jsr PrintHexByte
-;	print #':'
-;	rts
-; Version pour Librairie (sans utilisation de 'address')
-; Entrée; AY = adresse (A=MSB, Y=LSB)
-; /!\ Verifier que PrintHexByte préserve au moins Y
-;     et que XWR0 conserve A et Y
-	jsr PrintHexByte
-	tya
-	jsr PrintHexByte
-	rts
+.proc printWord
+		;	print #' '
+		;	lda address+1
+		;	jsr PrintHexByte
+		;	lda address
+		;	jsr PrintHexByte
+		;	print #':'
+		;	rts
+
+		; Version pour Librairie (sans utilisation de 'address')
+		; Entrée; AY = adresse (A=MSB, Y=LSB)
+		; /!\ Verifier que PrintHexByte préserve au moins Y
+		;     et que XWR0 conserve A et Y
+		jsr	PrintHexByte
+		tya
+		jsr	PrintHexByte
+		rts
+.endproc
 
 ;----------------------------------------------------------------------
 ;
@@ -1089,54 +1146,53 @@ printWord:
 ;	-
 ;----------------------------------------------------------------------
 .proc bin2bcd
-        ldx #$04          ; Clear BCD accumulator
-        lda #$00
+		ldx	#$04		; Clear BCD accumulator
+		lda	#$00
 
-    BRM:
-        sta TR0,x        ; Zeros into BCD accumulator
-        dex
-        bpl BRM
+	BRM:
+		sta	TR0,x		; Zeros into BCD accumulator
+		dex
+		bpl	BRM
 
-        sed               ; Decimal mode for add.
+		sed			; Decimal mode for add.
 
-        ldy #$20          ; Y has number of bits to be converted
+		ldy	#$20		; Y has number of bits to be converted
 
-    BRN:
-        asl LSB           ; Rotate binary number into carry
-        rol NLSB
-        rol NMSB
-        rol MSB
+	BRN:
+		asl	LSB		; Rotate binary number into carry
+		rol	NLSB
+		rol	NMSB
+		rol	MSB
 
-	;-------
-	; Pour MSB en premier dans BCDA
-	;    ldx #$05
-	;
-	;BRO:
-	;    lda BCDA-1,X
-	;    adc BCDA-1,X
-	;    sta BCDA-1,x
-	;    dex
-	;    bne BRO
+		;-------
+		; Pour MSB en premier dans BCDA
+		;    ldx #$05
+		;
+		;BRO:
+		;    lda BCDA-1,X
+		;    adc BCDA-1,X
+		;    sta BCDA-1,x
+		;    dex
+		;    bne BRO
 
-	; Pour LSB en premier dans BCDA
+		; Pour LSB en premier dans BCDA
 
 	BCDA = (TR0-$FB) & $ff ; = $0C
 
-        ldx #$fb          ; X will control a five byte addition.
+		ldx	#$fb		; X will control a five byte addition.
 
-    BRO:
-        lda BCDA,x    ; Get least-signficant byte of the BCD accumulator
-        adc BCDA,x    ; Add it to itself, then store.
-        sta BCDA,x
-        inx               ; Repeat until five byte have been added
-        bne BRO
+	BRO:
+		lda	BCDA,x		; Get least-signficant byte of the BCD accumulator
+		adc	BCDA,x		; Add it to itself, then store.
+		sta	BCDA,x
+		inx			; Repeat until five byte have been added
+		bne	BRO
 
-        dey               ; et another bit rom the binary number.
-        bne BRN
+		dey			; et another bit rom the binary number.
+		bne	BRN
 
-        cld               ; Back to binary mode.
-        rts               ; And back to the program.
-
+		cld			; Back to binary mode.
+		rts			; And back to the program.
 .endproc
 
 ;----------------------------------------------------------------------
@@ -1156,40 +1212,39 @@ printWord:
 ;	-
 ;----------------------------------------------------------------------
 .proc bcd2str
-	sta RES
-	sty RES+1
+		sta	RES
+		sty	RES+1
 
-	ldx #$04          ; Nombre d'octets à convertir
-	ldy #$00
-;	clc
+		ldx	#$04		; Nombre d'octets à convertir
+		ldy	#$00
+		; clc
 
-loop:
-	; BCDA: LSB en premier
-	lda TR0,X
-	pha
-	; and #$f0
-	lsr
-	lsr
-	lsr
-	lsr
-        clc
-	adc #'0'
-	sta (RES),Y
+	loop:
+		; BCDA: LSB en premier
+		lda	TR0,x
+		pha
+		; and #$f0
+		lsr
+		lsr
+		lsr
+		lsr
+		clc
+		adc	#'0'
+		sta	(RES),y
 
-	pla
-	and #$0f
-	adc #'0'
-	iny
-	sta (RES),y
+		pla
+		and	#$0f
+		adc	#'0'
+		iny
+		sta	(RES),y
 
-	iny
-	dex
-	bpl loop
+		iny
+		dex
+		bpl	loop
 
-	lda #$00
-	sta (RES),y
-	rts
-
+		lda	#$00
+		sta	(RES),y
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
@@ -1207,53 +1262,40 @@ loop:
 ;	-
 ;----------------------------------------------------------------------
 .proc getfname
-	; AY : adresse du paramètre suivant
-	; cbp:   ''          ''
-	;sty dskname
-	;sta dskname+1
+		; AY : adresse du paramètre suivant
+		; cbp:   ''          ''
+		;sty dskname
+		;sta dskname+1
 
-	ldy #$ff
-  loop:
-	iny
-	lda (cbp),y
-	sta fname,y
-	beq endloop
-	cmp #$0d
-	beq endloop
-	cmp #' '
-	bne loop
+		ldy	#$ff
+	loop:
+		iny
+		lda	(cbp),y
+		sta	fname,y
+		beq	endloop
 
-  endloop:
-	cpy #00
-	beq error_no_filename
+		cmp	#$0d
+		beq	endloop
 
-	; Termine la chaîne par un nul
-;	cmp #$00
-;	beq ajuste
+		cmp	#' '
+		bne	loop
 
-	lda #$00
-	;sta (cbp),y
-	sta fname,y
-	;iny
+	endloop:
+		cpy	#00
+		beq	error_no_filename
 
-	; Ajuste cbp
-;  ajuste:
-;	clc
-;	tya
-;	adc cbp
-;	sta cbp
-;	bcc skip
-;	inc cbp+1
-;
-;  skip:
-;	clc
-	jsr calposp
-	rts
+		; Termine la chaîne par un nul
+		lda	#$00
+		sta	fname,y
 
-  error_no_filename:
-	lda #e12
-	sec
-	rts
+		; Ajuste cbp
+		jsr	calposp
+		rts
+
+	error_no_filename:
+		lda	#e12
+		sec
+		rts
 .endproc
 
 ;===========================================================================
@@ -1264,31 +1306,33 @@ loop:
 ;----------------------------------------------------------------------
 ;
 ;----------------------------------------------------------------------
-crlf1:
-	BRK_KERNEL XCRLF
-	rts
+.proc crlf1
+		crlf
+		rts
+.endproc
 
 ;----------------------------------------------------------------------
 ;
 ;----------------------------------------------------------------------
-out1:
-	BRK_KERNEL XWR0
-	rts
+.proc out1
+		cputc
+		rts
+.endproc
 
 ;----------------------------------------------------------------------
 ;
 ;----------------------------------------------------------------------
 .proc prfild
-	print fname
-	rts
+		print	fname
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
 ;
 ;----------------------------------------------------------------------
 .proc prnamd
-	print fname
-	rts
+		print	fname
+		rts
 .endproc
 
 
@@ -1334,25 +1378,26 @@ seter1:
 ;	-
 ;----------------------------------------------------------------------
 .proc SetByteRead
-	pha
+		pha
 
-	lda #CH376_BYTE_READ
-	sta CH376_COMMAND
+		lda	#CH376_BYTE_READ
+		sta	CH376_COMMAND
 
-	pla
-	sta CH376_DATA
-	sty CH376_DATA
+		pla
+		sta	CH376_DATA
+		sty	CH376_DATA
 
-	jsr WaitResponse
-	cmp #CH376_USB_INT_DISK_READ
-	bne error
-	clc
-	rts
+		jsr	WaitResponse
+		cmp	#CH376_USB_INT_DISK_READ
+		bne	error
 
- error:
-	lda #e11
-	sec
-	rts
+		clc
+		rts
+
+	error:
+		lda	#e11
+		sec
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
@@ -1374,19 +1419,20 @@ seter1:
 ;	-
 ;----------------------------------------------------------------------
 .proc ByteRdGo
-	lda #CH376_BYTE_RD_GO
-	sta CH376_COMMAND
+		lda	#CH376_BYTE_RD_GO
+		sta	CH376_COMMAND
 
-	jsr WaitResponse
-	cmp #CH376_USB_INT_DISK_READ
-	bne error
-	clc
-	rts
+		jsr	WaitResponse
+		cmp	#CH376_USB_INT_DISK_READ
+		bne	error
 
- error:
-	lda #e11
-	sec
-	rts
+		clc
+		rts
+
+	error:
+		lda	#e11
+		sec
+		rts
 .endproc
 
 ;----------------------------------------------------------------------
@@ -1400,24 +1446,24 @@ seter1:
 ;	Z : 0 -> Ok, 1 -> Timeout
 ;----------------------------------------------------------------------
 .proc WaitResponse
-	ldy #$ff
+		ldy	#$ff
+	loop1:
+		ldx	#$ff
+	loop2:
+		lda	CH376_COMMAND
+		bmi	loop
 
- loop1:
-	ldx #$ff
- loop2:
-	lda CH376_COMMAND
-	bmi loop
-	lda #$22
-	sta CH376_COMMAND
-	lda CH376_DATA
-	rts
+		lda	#$22
+		sta	CH376_COMMAND
+		lda	CH376_DATA
+		rts
 
- loop:
- 	dex
- 	bne loop2
- 	dey
- 	bne loop1
- 	rts
+	loop:
+	 	dex
+	 	bne	loop2
+
+	 	dey
+	 	bne	loop1
+	 	rts
 .endproc
-
 
